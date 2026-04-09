@@ -51,3 +51,36 @@ Pour rendre les fonctions `collecter_*` idempotentes :
 - Le rapport du jour aurait 23h de donnees au lieu de 24h
 
 C'est pour ca qu'on utilise `pendulum.timezone("Europe/Paris")` dans le DAG et `timezone=Europe/Paris` dans les requetes API.
+
+---
+
+## Exercice 1 — SLA et alertes de delai
+
+**Ce qui a ete fait :**
+- Ajout d'un SLA global de 90 min dans `default_args` (toutes les taches doivent finir en 90 min max)
+- SLA de 45 min sur `generer_rapport_energie` (le rapport doit etre pret dans les 45 min)
+- Callback `sla_miss_callback` qui loggue un `[ALERTE SLA]` avec les taches en retard
+- Le callback est branche sur le DAG via `sla_miss_callback=sla_miss_callback`
+
+**Questions :**
+
+- **Difference entre `sla` et `execution_timeout`** : `sla` mesure le temps depuis le `start_date` du DAG Run, c'est juste un avertissement (la tache continue). `execution_timeout` c'est le temps max d'execution de la tache elle-meme, si c'est depasse la tache est tuee.
+
+- **Pourquoi un SLA miss n'arrete pas la tache** : parce que le SLA c'est juste une alerte pour prevenir qu'on est en retard. La tache peut quand meme finir et produire un resultat valide. C'est different d'un timeout qui est un arret force.
+
+---
+
+## Exercice 2 — Dynamic Task Mapping avec .expand()
+
+**Ce qui a ete fait :** Nouveau DAG `energie_meteo_dynamic_dag.py` qui utilise le TaskFlow API.
+
+- `charger_config_regions()` : charge les regions depuis une Variable Airflow `regions_energie` (JSON). Si la variable n'existe pas, utilise les 5 regions par defaut. Filtre aussi les regions presentes dans `regions_exclues`.
+- `extraire_meteo_region.expand(region=regions)` : cree automatiquement une instance de tache par region. Dans l'UI on voit des sous-instances `[0]`, `[1]`, `[2]`...
+- `collecter_production()` : recupere la production en parallele
+- `analyser_et_generer_rapport()` : recoit la liste de resultats du mapping et genere le rapport
+
+**Questions :**
+
+- **Quand preferer `.expand()` plutot que `.override()` en boucle** : `.expand()` c'est mieux quand le nombre d'elements est dynamique (on ne sait pas a l'avance combien de regions). Avec une boucle, si on change la liste il faut modifier le code. Avec `.expand()`, on change juste la Variable Airflow.
+
+- **Limite de XCom avec `.expand()`** : par defaut XCom stocke les donnees dans la base metadata d'Airflow. Si les donnees sont trop grosses (plusieurs Mo), ca peut ralentir la base. Pour de gros volumes il vaut mieux utiliser un XCom backend externe (S3, GCS...).
