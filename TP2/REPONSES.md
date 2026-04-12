@@ -5,9 +5,7 @@
 3 avantages de HDFS pour 50 Go/jour de logs :
 
 1. **Distribution** : HDFS repartit les fichiers sur plusieurs machines (DataNodes). Un disque local est limite a la capacite d'un seul serveur. Avec HDFS, on ajoute des DataNodes pour avoir plus d'espace.
-
 2. **Replication** : HDFS copie chaque fichier sur plusieurs DataNodes (facteur 3 en prod). Si un disque tombe en panne, les donnees sont toujours accessibles sur les autres copies. Un NFS ou un disque local n'a pas cette securite.
-
 3. **Localite des donnees** : Quand on lance un traitement Spark ou MapReduce, HDFS envoie le calcul la ou se trouvent les donnees (au lieu de deplacer les donnees vers le calcul). Ca evite de transferer des Go sur le reseau, ce qui est beaucoup plus rapide.
 
 ---
@@ -15,11 +13,13 @@
 ## Q2 — NameNode, point de defaillance unique (SPOF)
 
 Si le NameNode tombe :
+
 - Les DataNodes continuent de stocker les donnees mais personne ne sait ou elles sont (le NameNode gere l'index)
 - Les clients ne peuvent plus lire ni ecrire dans HDFS
 - Les donnees ne sont pas perdues, mais inaccessibles
 
 Pour resoudre ca, Hadoop propose le **HDFS NameNode HA** (Haute Disponibilite) :
+
 - On a 2 NameNodes : un **actif** et un **standby** (en attente)
 - Les **JournalNodes** (au moins 3) synchronisent les modifications entre les 2 NameNodes
 - Si le NameNode actif tombe, le standby prend le relais automatiquement
@@ -30,10 +30,10 @@ Pour resoudre ca, Hadoop propose le **HDFS NameNode HA** (Haute Disponibilite) :
 ## Q3 — HdfsSensor poke vs reschedule
 
 - **Mode poke** : le sensor occupe un slot de worker en permanence pendant qu'il attend. Il verifie toutes les X secondes mais ne libere pas le worker entre les verifications. Simple mais gaspille des ressources.
-
 - **Mode reschedule** : le sensor verifie, et s'il ne trouve pas le fichier, il libere le worker et se replanifie plus tard. Ca economise les slots de workers.
 
 En pratique :
+
 - **poke** : ok pour des attentes courtes (< 5 min) ou en dev
 - **reschedule** : recommande en prod avec CeleryExecutor, surtout si on a beaucoup de sensors
 
