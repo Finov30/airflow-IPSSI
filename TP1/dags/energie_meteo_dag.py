@@ -40,7 +40,7 @@ def sla_miss_callback(dag, task_list, blocking_task_list, slas, blocking_tis):
         logging.warning(f"[ALERTE SLA] Tache {sla.task_id} a depasse son SLA de {sla.timedelta}")
 
 
-# ========== TACHE 1 : Verification des APIs ==========
+# Verification des APIs
 # On teste que les 2 APIs repondent avant de lancer les collectes
 # Si une API est down, on leve une erreur et le pipeline s'arrete
 def verifier_apis(**context):
@@ -68,7 +68,7 @@ def verifier_apis(**context):
     logging.info("Toutes les APIs sont dispo.")
 
 
-# ========== TACHE 2 : Collecte meteo ==========
+# Collecte meteo
 # Pour chaque region, on appelle Open-Meteo pour recuperer :
 # - la duree d'ensoleillement (en heures)
 # - la vitesse max du vent (en km/h)
@@ -101,7 +101,7 @@ def collecter_meteo_regions(**context):
     return resultats
 
 
-# ========== TACHE 3 : Collecte production electrique ==========
+# Collecte production electrique
 # On recupere les donnees de production solaire et eolienne depuis l'API eCO2mix
 # L'API retourne plusieurs enregistrements par region (un par heure)
 # On fait la moyenne pour avoir une valeur journaliere en MW
@@ -145,7 +145,7 @@ def collecter_production_electrique(**context):
     return production
 
 
-# ========== TACHE 4 : Analyse de correlation ==========
+# Analyse de correlation
 # On recupere les resultats des taches 2 et 3 via XCom (xcom_pull)
 # On applique les regles metier de RTE pour detecter les anomalies :
 #   - soleil > 6h mais production solaire faible = probleme
@@ -199,7 +199,7 @@ def analyser_correlation(**context):
     return alertes
 
 
-# ========== TACHE 5 : Generation du rapport ==========
+# Generation du rapport
 # On affiche un tableau dans les logs Airflow pour voir les resultats rapidement
 # Et on sauvegarde un fichier JSON dans /tmp pour les equipes metier
 def generer_rapport_energie(**context):
@@ -239,7 +239,7 @@ def generer_rapport_energie(**context):
     return chemin  # le chemin est stocke dans XCom
 
 
-# ========== DEFINITION DU DAG ==========
+# Definition du DAG
 with DAG(
     dag_id="energie_meteo_dag",
     default_args=default_args,

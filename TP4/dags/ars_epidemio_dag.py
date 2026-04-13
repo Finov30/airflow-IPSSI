@@ -22,10 +22,8 @@ from airflow.utils.trigger_rule import TriggerRule
 
 logger = logging.getLogger(__name__)
 
-# -- Constantes ---------------------------------------------------------------
 POSTGRES_ARS_CONN_ID = "postgres_ars"
 
-# -- Configuration du DAG -----------------------------------------------------
 default_args = {
     "owner": "ars-occitanie",
     "depends_on_past": False,
@@ -37,27 +35,20 @@ default_args = {
 }
 
 
-def _get_semaine(context: dict) -> str:
-    """Extrait la semaine ISO depuis l'execution_date du context Airflow."""
+def _get_semaine(context):
+    """Extrait la semaine ISO depuis l'execution_date."""
     exec_date = context["execution_date"]
     year, week, _ = exec_date.isocalendar()
     return f"{year}-S{week:02d}"
 
 
-# =============================================================================
-# TACHE 1 : init_base_donnees (via PostgresOperator + fichier SQL)
-# =============================================================================
-# Defini directement dans le DAG ci-dessous
+# --- Collecte des donnees IAS ---
 
-
-# =============================================================================
-# TACHE 2 : collecter_donnees_sursaud
-# =============================================================================
-def collecter_donnees_ias(**context) -> str:
+def collecter_donnees_ias(**context):
     """Telecharge les CSV IAS et retourne le chemin du fichier JSON cree."""
-    semaine: str = _get_semaine(context)
-    archive_path: str = Variable.get("archive_base_path", default_var="/data/ars")
-    output_dir: str = f"{archive_path}/raw"
+    semaine = _get_semaine(context)
+    archive_path = Variable.get("archive_base_path", default_var="/data/ars")
+    output_dir = f"{archive_path}/raw"
 
     sys.path.insert(0, "/opt/airflow/scripts")
     from collecte_ias import (
@@ -65,7 +56,7 @@ def collecter_donnees_ias(**context) -> str:
         agreger_semaine, sauvegarder_donnees,
     )
 
-    resultats: dict = {}
+    resultats = {}
     for syndrome, url in DATASETS_IAS.items():
         try:
             rows_all = telecharger_csv_ias(url)
@@ -76,62 +67,58 @@ def collecter_donnees_ias(**context) -> str:
             logger.error("Erreur collecte %s : %s", syndrome, e)
             raise
 
-    chemin: str = sauvegarder_donnees(resultats, semaine, output_dir)
-    return chemin
+    return sauvegarder_donnees(resultats, semaine, output_dir)
 
 
-# =============================================================================
-# TACHE 3 : archiver_local + verifier_archive
-# =============================================================================
-def archiver_local(**context) -> str:
+# --- Archivage et verification ---
+
+def archiver_local(**context):
     """Copie le fichier brut dans la structure d'archivage partitionnee."""
-    semaine: str = _get_semaine(context)
-    annee: str = semaine.split("-")[0]
-    num_sem: str = semaine.split("-")[1]
+    semaine = _get_semaine(context)
+    annee = semaine.split("-")[0]
+    num_sem = semaine.split("-")[1]
 
-    chemin_source: str = context["task_instance"].xcom_pull(
+    chemin_source = context["task_instance"].xcom_pull(
         task_ids="collecte.collecter_donnees_sursaud"
     )
     if not chemin_source or not os.path.exists(chemin_source):
         raise FileNotFoundError(f"Fichier source introuvable : {chemin_source}")
 
-    archive_dir: str = f"/data/ars/raw/{annee}/{num_sem}"
+    archive_dir = f"/data/ars/raw/{annee}/{num_sem}"
     os.makedirs(archive_dir, exist_ok=True)
-    chemin_dest: str = f"{archive_dir}/sursaud_{semaine}.json"
+    chemin_dest = f"{archive_dir}/sursaud_{semaine}.json"
     shutil.copy2(chemin_source, chemin_dest)
     logger.info("Archive creee : %s", chemin_dest)
     return chemin_dest
 
 
-def verifier_archive(**context) -> bool:
+def verifier_archive(**context):
     """Verifie que le fichier d'archive existe et n'est pas vide."""
-    semaine: str = _get_semaine(context)
-    annee: str = semaine.split("-")[0]
-    num_sem: str = semaine.split("-")[1]
-    chemin: str = f"/data/ars/raw/{annee}/{num_sem}/sursaud_{semaine}.json"
+    semaine = _get_semaine(context)
+    annee = semaine.split("-")[0]
+    num_sem = semaine.split("-")[1]
+    chemin = f"/data/ars/raw/{annee}/{num_sem}/sursaud_{semaine}.json"
 
     if not os.path.exists(chemin):
         raise FileNotFoundError(f"Archive manquante : {chemin}")
-    taille: int = os.path.getsize(chemin)
+    taille = os.path.getsize(chemin)
     if taille == 0:
         raise ValueError(f"Archive vide : {chemin}")
     logger.info("Archive valide : %s (%d octets)", chemin, taille)
     return True
 
 
-# =============================================================================
-# TACHE 4 : calculer_indicateurs_epidemiques
-# =============================================================================
-def calculer_indicateurs_epidemiques(**context) -> str:
-    """Calcule z-score, R0 et classification pour chaque syndrome."""
-    semaine: str = _get_semaine(context)
-    annee: str = semaine.split("-")[0]
-    num_sem: str = semaine.split("-")[1]
+# --- Calcul des indicateurs epidemiques ---
 
-    # Lire les donnees brutes
-    chemin_brut: str = f"/data/ars/raw/{annee}/{num_sem}/sursaud_{semaine}.json"
+def calculer_indicateurs_epidemiques(**context):
+    """Calcule z-score, R0 et classification pour chaque syndrome."""
+    semaine = _get_semaine(context)
+    annee = semaine.split("-")[0]
+    num_sem = semaine.split("-")[1]
+
+    chemin_brut = f"/data/ars/raw/{annee}/{num_sem}/sursaud_{semaine}.json"
     with open(chemin_brut, "r", encoding="utf-8") as f:
-        donnees_brutes: dict = json.load(f)
+        donnees_brutes = json.load(f)
 
     sys.path.insert(0, "/opt/airflow/scripts")
     from calcul_indicateurs import (
@@ -140,47 +127,44 @@ def calculer_indicateurs_epidemiques(**context) -> str:
         calculer_r0_simplifie,
     )
 
-    seuil_alerte_z: float = float(Variable.get("seuil_alerte_zscore", default_var="1.5"))
-    seuil_urgence_z: float = float(Variable.get("seuil_urgence_zscore", default_var="3.0"))
+    seuil_alerte_z = float(Variable.get("seuil_alerte_zscore", default_var="1.5"))
+    seuil_urgence_z = float(Variable.get("seuil_urgence_zscore", default_var="3.0"))
 
-    # Recuperer les 4 dernieres valeurs IAS depuis PostgreSQL pour le R0
     hook = PostgresHook(postgres_conn_id=POSTGRES_ARS_CONN_ID)
-
-    indicateurs_resultats: list = []
-    syndromes_data: dict = donnees_brutes.get("syndromes", {})
+    indicateurs_resultats = []
+    syndromes_data = donnees_brutes.get("syndromes", {})
 
     for syndrome, data in syndromes_data.items():
-        valeur_ias: Optional[float] = data.get("valeur_ias")
+        valeur_ias = data.get("valeur_ias")
         if valeur_ias is None:
             logger.warning("Pas de valeur IAS pour %s semaine %s", syndrome, semaine)
             continue
 
-        seuil_min: Optional[float] = data.get("seuil_min")
-        seuil_max: Optional[float] = data.get("seuil_max")
+        seuil_min = data.get("seuil_min")
+        seuil_max = data.get("seuil_max")
 
-        # Z-score depuis l'historique des saisons
-        historique: dict = data.get("historique", {})
-        hist_values: list = [v for v in historique.values() if v is not None]
-        z_score: Optional[float] = calculer_zscore(valeur_ias, hist_values)
+        # z-score par rapport a l'historique des 5 saisons
+        historique = data.get("historique", {})
+        hist_values = [v for v in historique.values() if v is not None]
+        z_score = calculer_zscore(valeur_ias, hist_values)
 
-        # R0 : recuperer les 4 dernieres valeurs IAS depuis la base
+        # R0 : on recupere les 4 dernieres semaines depuis la base
         try:
             rows = hook.get_records(
                 """SELECT valeur_ias FROM donnees_hebdomadaires
                    WHERE syndrome = %s ORDER BY semaine DESC LIMIT 4""",
                 parameters=(syndrome,)
             )
-            series_r0: list = [r[0] for r in reversed(rows)] + [valeur_ias]
+            series_r0 = [r[0] for r in reversed(rows)] + [valeur_ias]
         except Exception:
             series_r0 = [valeur_ias]
 
-        duree_inf: int = 5 if syndrome == "GRIPPE" else 3
-        r0: Optional[float] = calculer_r0_simplifie(series_r0, duree_inf)
+        duree_inf = 5 if syndrome == "GRIPPE" else 3
+        r0 = calculer_r0_simplifie(series_r0, duree_inf)
 
-        # Classification
-        statut_ias: str = classifier_statut_ias(valeur_ias, seuil_min, seuil_max)
-        statut_z: str = classifier_statut_zscore(z_score, seuil_alerte_z, seuil_urgence_z)
-        statut_final: str = classifier_statut_final(statut_ias, statut_z)
+        statut_ias = classifier_statut_ias(valeur_ias, seuil_min, seuil_max)
+        statut_z = classifier_statut_zscore(z_score, seuil_alerte_z, seuil_urgence_z)
+        statut_final = classifier_statut_final(statut_ias, statut_z)
 
         indicateurs_resultats.append({
             "semaine": semaine,
@@ -203,10 +187,10 @@ def calculer_indicateurs_epidemiques(**context) -> str:
             r0, statut_final,
         )
 
-    # Sauvegarder les indicateurs
-    indic_dir: str = "/data/ars/indicateurs"
+    # sauvegarde des indicateurs en JSON
+    indic_dir = "/data/ars/indicateurs"
     os.makedirs(indic_dir, exist_ok=True)
-    indic_path: str = f"{indic_dir}/indicateurs_{semaine}.json"
+    indic_path = f"{indic_dir}/indicateurs_{semaine}.json"
     with open(indic_path, "w", encoding="utf-8") as f:
         json.dump(indicateurs_resultats, f, ensure_ascii=False, indent=2)
 
@@ -214,26 +198,22 @@ def calculer_indicateurs_epidemiques(**context) -> str:
     return indic_path
 
 
-# =============================================================================
-# TACHE 5 : inserer_donnees_postgres
-# =============================================================================
-def inserer_donnees_postgres(**context) -> None:
-    """Insere donnees hebdomadaires + indicateurs dans PostgreSQL (UPSERT)."""
-    semaine: str = _get_semaine(context)
-    annee: str = semaine.split("-")[0]
-    num_sem: str = semaine.split("-")[1]
+# --- Insertion PostgreSQL (UPSERT) ---
 
-    # Lire les fichiers JSON
+def inserer_donnees_postgres(**context):
+    """Insere donnees hebdomadaires + indicateurs dans PostgreSQL."""
+    semaine = _get_semaine(context)
+    annee = semaine.split("-")[0]
+    num_sem = semaine.split("-")[1]
+
     with open(f"/data/ars/raw/{annee}/{num_sem}/sursaud_{semaine}.json", "r") as f:
-        donnees_brutes: dict = json.load(f)
-
+        donnees_brutes = json.load(f)
     with open(f"/data/ars/indicateurs/indicateurs_{semaine}.json", "r") as f:
-        indicateurs: list = json.load(f)
+        indicateurs = json.load(f)
 
     hook = PostgresHook(postgres_conn_id=POSTGRES_ARS_CONN_ID)
 
-    # UPSERT donnees_hebdomadaires
-    sql_donnees: str = """
+    sql_donnees = """
         INSERT INTO donnees_hebdomadaires
             (semaine, syndrome, valeur_ias, seuil_min_saison, seuil_max_saison, nb_jours_donnees)
         VALUES (%(semaine)s, %(syndrome)s, %(valeur_ias)s, %(seuil_min)s, %(seuil_max)s, %(nb_jours)s)
@@ -245,8 +225,7 @@ def inserer_donnees_postgres(**context) -> None:
             updated_at       = CURRENT_TIMESTAMP;
     """
 
-    # UPSERT indicateurs_epidemiques
-    sql_indic: str = """
+    sql_indic = """
         INSERT INTO indicateurs_epidemiques
             (semaine, syndrome, valeur_ias, z_score, r0_estime,
              nb_saisons_reference, statut, statut_ias, statut_zscore)
@@ -263,10 +242,9 @@ def inserer_donnees_postgres(**context) -> None:
             updated_at           = CURRENT_TIMESTAMP;
     """
 
-    nb_inserted: int = 0
+    nb_inserted = 0
     with hook.get_conn() as conn:
         with conn.cursor() as cur:
-            # Inserer les donnees hebdomadaires par syndrome
             for syndrome, data in donnees_brutes.get("syndromes", {}).items():
                 if data.get("valeur_ias") is not None:
                     cur.execute(sql_donnees, {
@@ -279,7 +257,6 @@ def inserer_donnees_postgres(**context) -> None:
                     })
                     nb_inserted += 1
 
-            # Inserer les indicateurs
             for indic in indicateurs:
                 cur.execute(sql_indic, indic)
                 nb_inserted += 1
@@ -289,12 +266,11 @@ def inserer_donnees_postgres(**context) -> None:
     logger.info("%d enregistrements inseres/mis a jour pour %s", nb_inserted, semaine)
 
 
-# =============================================================================
-# TACHE 6 : evaluer_situation_epidemique (BranchPythonOperator)
-# =============================================================================
-def evaluer_situation_epidemique(**context) -> str:
+# --- Evaluation de la situation epidemique (branching) ---
+
+def evaluer_situation_epidemique(**context):
     """Determine le chemin d'execution selon la situation la plus severe."""
-    semaine: str = _get_semaine(context)
+    semaine = _get_semaine(context)
     hook = PostgresHook(postgres_conn_id=POSTGRES_ARS_CONN_ID)
 
     with hook.get_conn() as conn:
@@ -305,10 +281,10 @@ def evaluer_situation_epidemique(**context) -> str:
                 WHERE semaine = %s
                 GROUP BY statut
             """, (semaine,))
-            resultats: dict = {row[0]: row[1] for row in cur.fetchall()}
+            resultats = {row[0]: row[1] for row in cur.fetchall()}
 
-    nb_urgence: int = resultats.get("URGENCE", 0)
-    nb_alerte: int = resultats.get("ALERTE", 0)
+    nb_urgence = resultats.get("URGENCE", 0)
+    nb_alerte = resultats.get("ALERTE", 0)
 
     context["task_instance"].xcom_push(key="nb_urgence", value=nb_urgence)
     context["task_instance"].xcom_push(key="nb_alerte", value=nb_alerte)
@@ -325,30 +301,25 @@ def evaluer_situation_epidemique(**context) -> str:
         return "confirmer_situation_normale"
 
 
-def declencher_alerte_ars(**context) -> None:
-    """Action en cas d'URGENCE epidemique."""
+def declencher_alerte_ars(**context):
     logger.critical("ALERTE ARS DECLENCHEE -- Situation URGENCE en Occitanie")
 
 
-def envoyer_bulletin_surveillance(**context) -> None:
-    """Action en cas d'ALERTE epidemique."""
+def envoyer_bulletin_surveillance(**context):
     logger.warning("Bulletin de surveillance envoye -- Situation ALERTE en Occitanie")
 
 
-def confirmer_situation_normale(**context) -> None:
-    """Action quand la situation est normale."""
+def confirmer_situation_normale(**context):
     logger.info("Situation epidemiologique normale en Occitanie")
 
 
-# =============================================================================
-# TACHE 7 : generer_rapport_hebdomadaire
-# =============================================================================
-def generer_rapport_hebdomadaire(**context) -> None:
+# --- Generation du rapport hebdomadaire ---
+
+def generer_rapport_hebdomadaire(**context):
     """Genere un rapport JSON et l'enregistre dans PostgreSQL."""
-    semaine: str = _get_semaine(context)
+    semaine = _get_semaine(context)
     hook = PostgresHook(postgres_conn_id=POSTGRES_ARS_CONN_ID)
 
-    # Lire les indicateurs depuis PostgreSQL
     with hook.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -360,15 +331,15 @@ def generer_rapport_hebdomadaire(**context) -> None:
             """, (semaine,))
             indicateurs = cur.fetchall()
 
-    statuts: list = [row[4] for row in indicateurs]
+    statuts = [row[4] for row in indicateurs]
     if "URGENCE" in statuts:
-        situation_globale: str = "URGENCE"
+        situation_globale = "URGENCE"
     elif "ALERTE" in statuts:
         situation_globale = "ALERTE"
     else:
         situation_globale = "NORMAL"
 
-    recommandations_map: dict = {
+    recommandations = {
         "URGENCE": [
             "Activation du plan de reponse epidemique regional",
             "Notification immediate a Sante Publique France",
@@ -383,7 +354,7 @@ def generer_rapport_hebdomadaire(**context) -> None:
         ],
     }
 
-    rapport: dict = {
+    rapport = {
         "semaine": semaine,
         "region": "Occitanie",
         "code_region": "76",
@@ -400,20 +371,20 @@ def generer_rapport_hebdomadaire(**context) -> None:
             }
             for row in indicateurs
         ],
-        "recommandations": recommandations_map.get(situation_globale, []),
+        "recommandations": recommandations.get(situation_globale, []),
         "genere_par": "ars_epidemio_dag v1.0",
         "pipeline_version": "2.8",
     }
 
-    # Sauvegarder le rapport en JSON
-    annee: str = semaine.split("-")[0]
-    num_sem: str = semaine.split("-")[1]
-    local_path: str = f"/data/ars/rapports/{annee}/{num_sem}/rapport_{semaine}.json"
+    # sauvegarde JSON sur le volume
+    annee = semaine.split("-")[0]
+    num_sem = semaine.split("-")[1]
+    local_path = f"/data/ars/rapports/{annee}/{num_sem}/rapport_{semaine}.json"
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     with open(local_path, "w", encoding="utf-8") as f:
         json.dump(rapport, f, ensure_ascii=False, indent=2)
 
-    # Inserer dans rapports_ars
+    # insertion dans la table rapports_ars
     hook2 = PostgresHook(postgres_conn_id=POSTGRES_ARS_CONN_ID)
     with hook2.get_conn() as conn:
         with conn.cursor() as cur:
@@ -440,9 +411,8 @@ def generer_rapport_hebdomadaire(**context) -> None:
     logger.info("Rapport %s genere -- Statut : %s -- %s", semaine, situation_globale, local_path)
 
 
-# =============================================================================
-# DEFINITION DU DAG
-# =============================================================================
+# --- Definition du DAG ---
+
 with DAG(
     dag_id="ars_epidemio_dag",
     default_args=default_args,
@@ -454,7 +424,6 @@ with DAG(
     tags=["sante-publique", "epidemio", "docker-compose"],
 ) as dag:
 
-    # Etape 3 : Init base PostgreSQL
     init_base = PostgresOperator(
         task_id="init_base_donnees",
         postgres_conn_id=POSTGRES_ARS_CONN_ID,
@@ -462,7 +431,6 @@ with DAG(
         autocommit=True,
     )
 
-    # Etape 4 : Collecte des donnees IAS
     with TaskGroup("collecte") as tg_collecte:
         collecter_sursaud = PythonOperator(
             task_id="collecter_donnees_sursaud",
@@ -470,7 +438,6 @@ with DAG(
             provide_context=True,
         )
 
-    # Etape 5 : Archivage et verification
     with TaskGroup("persistance_brute") as tg_archive:
         archiver = PythonOperator(
             task_id="archiver_local",
@@ -484,7 +451,6 @@ with DAG(
         )
         archiver >> verifier
 
-    # Etape 6 : Calcul des indicateurs
     with TaskGroup("traitement") as tg_traitement:
         calculer_indic = PythonOperator(
             task_id="calculer_indicateurs_epidemiques",
@@ -492,7 +458,6 @@ with DAG(
             provide_context=True,
         )
 
-    # Etape 7 : Insertion PostgreSQL
     with TaskGroup("persistance_operationnelle") as tg_persist:
         inserer_pg = PythonOperator(
             task_id="inserer_donnees_postgres",
@@ -500,7 +465,6 @@ with DAG(
             provide_context=True,
         )
 
-    # Etape 8 : Evaluation et branchement
     evaluer = BranchPythonOperator(
         task_id="evaluer_situation_epidemique",
         python_callable=evaluer_situation_epidemique,
@@ -523,7 +487,6 @@ with DAG(
         provide_context=True,
     )
 
-    # Etape 9 : Rapport hebdomadaire
     generer_rapport = PythonOperator(
         task_id="generer_rapport_hebdomadaire",
         python_callable=generer_rapport_hebdomadaire,
@@ -531,6 +494,6 @@ with DAG(
         provide_context=True,
     )
 
-    # Enchainement des taches
+    # enchainement
     init_base >> tg_collecte >> tg_archive >> tg_traitement >> tg_persist
     tg_persist >> evaluer >> [alerte_ars, bulletin, normale] >> generer_rapport

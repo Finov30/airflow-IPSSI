@@ -21,14 +21,12 @@ from airflow.utils.dates import days_ago
 
 logger = logging.getLogger(__name__)
 
-# -- Constantes ---------------------------------------------------------------
 DVF_URL = "https://static.data.gouv.fr/resources/demandes-de-valeurs-foncieres/20260405-002251/valeursfoncieres-2023.txt.zip"
 WEBHDFS_BASE_URL = "http://hdfs-namenode:9870/webhdfs/v1"
 WEBHDFS_USER = "root"
 HDFS_RAW_PATH = "/data/dvf/raw"
 POSTGRES_CONN_ID = "dvf_postgres"
 
-# -- Configuration du DAG -----------------------------------------------------
 default_args = {
     "owner": "data-engineering",
     "depends_on_past": False,
@@ -50,9 +48,7 @@ default_args = {
 )
 def pipeline_dvf():
 
-    # =========================================================================
-    # Tache 1 : Verifier que les sources sont accessibles
-    # =========================================================================
+    # --- Verification des sources ---
     @task(task_id="verifier_sources")
     def verifier_sources() -> dict:
         """
@@ -92,9 +88,7 @@ def pipeline_dvf():
         statuts["timestamp"] = datetime.now().isoformat()
         return statuts
 
-    # =========================================================================
-    # Tache 2 : Telecharger le fichier CSV DVF
-    # =========================================================================
+    # --- Telechargement du CSV DVF ---
     @task(task_id="telecharger_dvf")
     def telecharger_dvf(statuts: dict) -> str:
         """
@@ -142,9 +136,7 @@ def pipeline_dvf():
         logger.info("CSV extrait : %s (%.2f Mo)", local_path, taille / (1024 * 1024))
         return local_path
 
-    # =========================================================================
-    # Tache 3 : Stocker le CSV dans HDFS (zone raw)
-    # =========================================================================
+    # --- Upload vers HDFS ---
     @task(task_id="stocker_hdfs_raw")
     def stocker_hdfs_raw(local_path: str) -> str:
         """
@@ -193,9 +185,7 @@ def pipeline_dvf():
 
         return hdfs_file_path
 
-    # =========================================================================
-    # Tache 4 : Traiter les donnees (filtrage + agregation)
-    # =========================================================================
+    # --- Traitement des donnees ---
     @task(task_id="traiter_donnees")
     def traiter_donnees(hdfs_path: str) -> dict:
         """
@@ -321,9 +311,7 @@ def pipeline_dvf():
 
         return {"agregats": agregats, "stats_globales": stats_globales}
 
-    # =========================================================================
-    # Tache 5 : Inserer les agregats dans PostgreSQL
-    # =========================================================================
+    # --- Insertion PostgreSQL ---
     @task(task_id="inserer_postgresql")
     def inserer_postgresql(resultats: dict) -> int:
         """
@@ -404,9 +392,7 @@ def pipeline_dvf():
 
         return nb_inseres
 
-    # =========================================================================
-    # Tache 6 : Generer le rapport (classement arrondissements)
-    # =========================================================================
+    # --- Rapport final ---
     @task(task_id="generer_rapport")
     def generer_rapport(nb_inseres: int) -> str:
         """
@@ -464,9 +450,7 @@ def pipeline_dvf():
         logger.info(rapport)
         return rapport
 
-    # =========================================================================
-    # Enchainement des taches
-    # =========================================================================
+    # enchainement
     t_verif = verifier_sources()
     t_download = telecharger_dvf(t_verif)
     t_hdfs = stocker_hdfs_raw(t_download)
